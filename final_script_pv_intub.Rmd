@@ -1,0 +1,720 @@
+---
+title: "Final_script_intub_pv"
+author: "Benjamin Gravesteijn"
+date: "11 februari 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(data.table)
+library(grid)
+library(Gmisc)
+library(knitr)
+library(ggplot2)
+library(rms)
+library(lme4)
+library(lattice)
+library(lubridate)
+library(mice)
+library(mitml)
+library(mice)
+library(miceadds)
+library(splines)
+library(ROCR)
+library(mitools)
+library(tableone)
+library
+
+theme_set(new = theme_classic())
+
+load("Data/Sleutellijst.rdata")
+df <- read.csv("Data/data_11-2-2019.csv")
+df <- merge(df, dt.key, by="gupi", all.x=TRUE)
+
+#####intubation var
+df$intub <- 0
+df$intub <- ifelse(df$InjuryHx.EDAirway==5|
+                     df$InjuryHx.PresIntubation==1,2,df$intub)
+df$intub <- ifelse(df$InjuryHx.PresEmergencyCareIntubation==1,1,df$intub)
+df$intub <- ifelse(!(df$intub%in%c(1,2)), 0, df$intub)
+df$intub <- ifelse((is.na(df$InjuryHx.PresEmergencyCareIntubation)|df$InjuryHx.PresEmergencyCareIntubation==88)&
+                     (is.na(df$InjuryHx.EDAirway)|df$InjuryHx.EDAirway==88)&
+                     (is.na(df$InjuryHx.PresIntubation)|df$InjuryHx.PresIntubation==88), NA, df$intub)
+table(df$intub, useNA = "ifany")
+
+df$InjuryHx.PresEmergencyCareIntubation <- NULL
+df$InjuryHx.EDAirway <- NULL
+df$InjuryHx.EDArrivalAirway <- NULL
+
+###### times
+df$los <- as.numeric(difftime(ymd(df$Hospital.HospDischDate), ymd("1970-1-1"), units="days"))
+df$los[df$los<0|
+         df$los>quantile(df$los, probs=0.97, na.rm=TRUE)] <- NA
+df$Hospital.HospDischDate <- NULL
+
+df$arrtime <- ifelse(df$InjuryHx.PresTBIRef==1,
+                     as.character(df$InjuryHx.PresSTHospTime), 
+                     as.character(df$InjuryHx.PresFHospTime))
+df$prehosptime <- as.numeric(difftime(time1 = ymd_hms(paste("1970-1-1", df$arrtime)), 
+                           time2 = ymd_hms(paste("1970-1-1", df$Subject.TimeInj)),
+                           units = "hours"))
+df$prehosptime[df$prehosptime<0|
+                 df$prehosptime>quantile(df$prehosptime, probs=0.97, na.rm=TRUE)] <- NA
+
+df$travtime <- as.numeric(difftime(time1 = ymd_hms(paste("1970-1-1", df$arrtime)), 
+                           time2 = ymd_hms(paste("1970-1-1", df$InjuryHx.PresFirstOnSceneDepartureTime)),
+                           units = "hours"))
+df$travtime[df$travtime<0|
+                 df$travtime>quantile(df$travtime, probs=0.97, na.rm=TRUE)] <- NA
+
+df$arrtime <- NULL
+df$InjuryHx.PresTBIRef <- NULL
+df$InjuryHx.PresFHospTime <- NULL
+df$InjuryHx.PresSTHospTime <- NULL
+df$Subject.TimeInj <- NULL
+df$InjuryHx.PresFirstOnSceneDepartureTime <- NULL
+
+#####unitchange
+df$weight <- ifelse(is.na(df$InjuryHx.EDArrivalBodyWeightKg),
+                    df$InjuryHx.EDArrivalBodyWeightLbs*0.45359237,
+                    df$InjuryHx.EDArrivalBodyWeightKg)
+df$InjuryHx.EDArrivalBodyWeightKg <- NULL
+df$InjuryHx.EDArrivalBodyWeightLbs <- NULL
+
+df$height <- ifelse(is.na(df$InjuryHx.EDArrivalHeightCm),
+                    df$InjuryHx.EDArrivalHeightInches*2.54,
+                    df$InjuryHx.EDArrivalHeightCm)
+df$InjuryHx.EDArrivalHeightCm <- NULL
+df$InjuryHx.EDArrivalHeightInches <- NULL
+df$height[df$height<20|
+            df$height>220] <- NA
+
+df$bmi <- ifelse(is.na(df$InjuryHx.EDArrivalBMIKgCm),
+                 (df$InjuryHx.EDArrivalBodyWeightKg/((df$InjuryHx.EDArrivalHeightCm/100)^2)),
+                 df$InjuryHx.EDArrivalBMIKgCm)
+df$bmi[df$bmi<10|
+         df$bmi>60] <- NA
+df$InjuryHx.EDArrivalBMIKgCm <- NULL
+
+##### pupils
+df$pupil_ph <- ifelse(df$InjuryHx.GCSPreHospPupilReactivityLghtLftEyeResult==3|
+                        df$InjuryHx.GCSPreHospPupilReactivityLghtRghtEyeResult==3,
+                      1,0)
+df$pupil_ph <- ifelse(df$InjuryHx.GCSPreHospPupilReactivityLghtLftEyeResult==3&
+                        df$InjuryHx.GCSPreHospPupilReactivityLghtRghtEyeResult==3,
+                      2,df$pupil_ph)
+df$InjuryHx.GCSPreHospPupilReactivityLghtLftEyeResult <- NULL
+df$InjuryHx.GCSPreHospPupilReactivityLghtRghtEyeResult <- NULL
+
+df$pupil_ih <- ifelse(df$InjuryHx.EDArrPupilReactivityLghtLftEyeReslt==3|
+                        df$InjuryHx.EDArrPupilReactivityLghtRtEyeReslt==3,
+                      1,0)
+df$pupil_ih <- ifelse(df$InjuryHx.EDArrPupilReactivityLghtLftEyeReslt==3&
+                        df$InjuryHx.EDArrPupilReactivityLghtRtEyeReslt==3,
+                      2,df$pupil_ph)
+df$InjuryHx.EDArrPupilReactivityLghtLftEyeReslt <- NULL
+df$InjuryHx.EDArrPupilReactivityLghtRtEyeReslt <- NULL
+
+#####factorize vars
+facvars <- colnames(df)[c(2,3,9,11,17,22,23,25,32,33)]
+
+for(i in facvars){
+  df[,i] <- factor(df[,i])
+}
+
+levels(df$InjuryHx.InjCause) <- c("RTI", "fall", "other", "violence", "violence","violence",NA, "other")
+levels(df$InjuryHx.PresIntubation) <- c(0,1,NA)
+levels(df$InjuryHx.PresArrivalMethod) <- c("ambu", "heli","mmt","walk-in","other")
+
+levels(df$InjuryHx.GCSPreHospBestScore) <- c(NA,10:15,3:9, NA)
+df$InjuryHx.GCSPreHospBestScore <- as.numeric(df$InjuryHx.GCSPreHospBestScore)
+levels(df$InjuryHx.GCSPreHospBestMotor) <- c(NA, 1:6, NA,NA,NA)
+df$InjuryHx.GCSPreHospBestMotor <- as.numeric(df$InjuryHx.GCSPreHospBestMotor)
+levels(df$InjuryHx.GCSEDArrMotor) <- c(NA, 1:6, NA,NA,NA)
+df$InjuryHx.GCSEDArrMotor <- as.numeric(df$InjuryHx.GCSEDArrMotor)
+levels(df$InjuryHx.GCSEDArrScore) <- c(NA,10:15,3:9, NA)
+df$InjuryHx.GCSEDArrScore <- as.numeric(df$InjuryHx.GCSEDArrScore)
+
+df$InjuryHx.InjType <- NULL
+bgravesteijn::distr.na(df)
+
+df$mtbi <- factor(ifelse(df$InjuryHx.GCSScoreBaselineDerived>12,1,0))
+
+#######centersubset
+centersubset <- names(which(table(df$center)>20))
+
+#######subsetting!
+n_strobe <- nrow(df)
+df <- df[df$InjuryHx.PresArrivalMethod!="walk-in",]
+n_strobe <- c(n_strobe, nrow(df))
+df <- df[df$center%in%centersubset,]
+levels(df$center)[which(table(df$center)==0)] <- NA 
+n_strobe <- c(n_strobe, nrow(df))
+df <- df[!is.na(df$intub),]
+n_strobe <- c(n_strobe, nrow(df))
+```
+
+## Table one
+
+```{r table1}
+vrbls <-  colnames(df)[c(-1,-17,-19:-25)]
+facvars <- vrbls[vrbls%in%facvars]
+numvars <- vrbls[!(vrbls%in%facvars)]
+
+tbl1 <- CreateTableOne(vars = vrbls, strata = "intub", data=df, factorVars = facvars)
+tbl.p <- print(tbl1, nonnorm=numvars, missing=TRUE, printToggle=FALSE)
+
+kable(tbl.p)
+write.csv2(tbl.p, file = "Output/tableone.csv")
+
+sum(is.na(df$InjuryHx.PresIntubation[df$intub==2]))/sum(df$intub==2)
+
+t.test(df$prehosptime~df$intub!=1)
+1.439506-1.154768
+
+```
+
+```{r number per country/center}
+country.df <- data.frame(table(df$country), stringsAsFactors = FALSE)
+country.df$Var1 <- factor(country.df$Var1, levels = unique(country.df$Var1)[order(country.df$Freq, decreasing = TRUE)])
+countryplot <- ggplot(country.df, aes(x=Var1, y=Freq))+
+  geom_col(fill=RColorBrewer::brewer.pal(n=1,name = "BuGn")[3])+
+  ggtitle('    Patients per country')+xlab(label = "Country")+
+  ylab(label="Frequency")+theme(axis.text.x=element_blank())+
+  geom_hline(yintercept = median(country.df$Freq), linetype=2)+
+  annotate(geom = "text", x=15, y=(median(country.df$Freq)+30), label="Median")
+center.df <- data.frame(table(df$center), stringsAsFactors = FALSE)
+center.df$Var1 <- factor(center.df$Var1, levels = unique(center.df$Var1)[order(center.df$Freq, decreasing = TRUE)])
+centerplot <- ggplot(center.df, aes(x=Var1, y=Freq))+geom_col(fill=RColorBrewer::brewer.pal(n=1,name = "BuGn")[3])+
+  ggtitle('    Patients per centre')+xlab(label = "Centre")+
+  ylab(label="Frequency")+theme(axis.text.x=element_blank())+
+  geom_hline(yintercept = median(center.df$Freq), linetype=2)+
+  annotate(geom = "text", x=40, y=(median(center.df$Freq)+10), label="Median")
+countryplot
+centerplot
+
+pdf("Output/figure1.pdf", height = 5, width = 10)
+bgravesteijn::multiplot(countryplot, centerplot, cols=2)
+dev.off()
+tiff("Output/figure2.tiff", width=712, height=425, res = 90)
+bgravesteijn::multiplot(countryplot, centerplot, cols=2)
+dev.off()
+```
+
+```{r, flowchart}
+grid.newpage()
+# set some parameters to use repeatedly
+leftx <- .3
+midx <- .5
+rightx <- .8
+width <- .25
+gp <- gpar(fill = "lightgrey")
+# create boxes
+(total_uk <- boxGrob(label = paste("Total\n N = ", n_strobe[1]),
+                    x=midx, y=.9, box_gp = gp, width = width))
+
+(crit1.in_uk <- boxGrob(label = paste("Remaining\n N = ", n_strobe[2]),
+                       x=midx, y=.625, box_gp = gp, width = width))
+
+connectGrob(total_uk, crit1.in_uk, "v")
+
+(crit1.excl_uk <- boxGrob(label = paste("Walk-in\n N = ",n_strobe[1]-n_strobe[2]),
+                         x=rightx, y=mean(c(0.9,0.625)), box_gp = gp, width = width))
+
+connectGrob(total_uk, crit1.excl_uk, "-")
+
+(crit2.in_uk <- boxGrob(label = paste("Remaining\n N = ", n_strobe[3]),
+                       x=midx, y=0.375, box_gp = gp, width = width))
+
+connectGrob(crit1.in_uk, crit2.in_uk, "v")
+
+(crit2.excl_uk <- boxGrob(label = paste("Centres with <20 patients\n N = ",n_strobe[2]-n_strobe[3]),
+                         x=rightx, y=mean(c(0.625,0.375)), box_gp = gp, width = width))
+
+connectGrob(crit1.in_uk, crit2.excl_uk, "-")
+
+(crit3.in_uk <- boxGrob(label = paste("Remaining\n N = ", n_strobe[4]),
+                       x=midx, y=0.1, box_gp = gp, width = width))
+
+connectGrob(crit2.in_uk, crit3.in_uk, "v")
+
+(crit3.excl_uk <- boxGrob(label = paste("Missing intubation data\n N = ",n_strobe[3]-n_strobe[4]), 
+                         x=rightx, y=mean(c(0.1,0.375)), box_gp = gp, width = width))
+
+connectGrob(crit2.in_uk, crit3.excl_uk, "-")
+
+tiff("Output/figure1.tiff",width=500, height=425, res = 80)
+grid.newpage()
+# set some parameters to use repeatedly
+leftx <- .3
+midx <- .5
+rightx <- .8
+width <- .25
+gp <- gpar(fill = "lightgrey")
+# create boxes
+(total_uk <- boxGrob(label = paste("Total\n N = ", n_strobe[1]),
+                    x=midx, y=.9, box_gp = gp, width = width))
+
+(crit1.in_uk <- boxGrob(label = paste("Remaining\n N = ", n_strobe[2]),
+                       x=midx, y=.625, box_gp = gp, width = width))
+
+connectGrob(total_uk, crit1.in_uk, "v")
+
+(crit1.excl_uk <- boxGrob(label = paste("Walk-in\n N = ",n_strobe[1]-n_strobe[2]),
+                         x=rightx, y=mean(c(0.9,0.625)), box_gp = gp, width = width))
+
+connectGrob(total_uk, crit1.excl_uk, "-")
+
+(crit2.in_uk <- boxGrob(label = paste("Remaining\n N = ", n_strobe[3]),
+                       x=midx, y=0.375, box_gp = gp, width = width))
+
+connectGrob(crit1.in_uk, crit2.in_uk, "v")
+
+(crit2.excl_uk <- boxGrob(label = paste("Centres with <20 patients\n N = ",n_strobe[2]-n_strobe[3]),
+                         x=rightx, y=mean(c(0.625,0.375)), box_gp = gp, width = width))
+
+connectGrob(crit1.in_uk, crit2.excl_uk, "-")
+
+(crit3.in_uk <- boxGrob(label = paste("Remaining\n N = ", n_strobe[4]),
+                       x=midx, y=0.1, box_gp = gp, width = width))
+
+connectGrob(crit2.in_uk, crit3.in_uk, "v")
+
+(crit3.excl_uk <- boxGrob(label = paste("Missing intubation data\n N = ",n_strobe[3]-n_strobe[4]), 
+                         x=rightx, y=mean(c(0.1,0.375)), box_gp = gp, width = width))
+
+connectGrob(crit2.in_uk, crit3.excl_uk, "-")
+dev.off()
+
+```
+
+```{r}
+library(maps)
+library(maptools)
+
+key.maps     <- data.frame(country=unique(df$country),
+                           region=c("uk", "france","netherlands","sweden",
+                                    "spain", "belgium", "italy", "norway",
+                                    "serbia","latvia","germany","finland",
+                                    "austria","lithuania","romania", "hungary"))
+phi_props <- data.frame(prop.table(table(df$intub, df$country),2)[2,], 
+                        country=names(prop.table(table(df$intub, df$country),2)[2,]))
+ihi_props <- data.frame(prop.table(table(df$intub, df$country),2)[3,],
+                        country=names(prop.table(table(df$intub, df$country),2)[3,]))
+intub_props <- merge(phi_props, key.maps, by="country")
+intub_props <- merge(ihi_props, intub_props, by="country")
+colnames(intub_props) <- c("country", "ihi", "phi", "region")
+
+world        <- map_data("world")
+world$region <- tolower(world$region) 
+world        <- world[world$region!="antarctica", ]
+world$ph_int  <- intub_props$phi[match(world$region, intub_props$region, nomatch=NA)] 
+world$ih_int  <- intub_props$ihi[match(world$region, intub_props$region,nomatch=NA)]
+
+phi_plot <- ggplot() + geom_polygon(data = world, aes(long, lat, group = group, fill = ph_int*100))+theme_bw()+
+  theme(line = element_blank()) + 
+  scale_x_continuous(limits=c(-11,33),labels = NULL, name = element_blank()) + 
+  scale_y_continuous(limits=c(35,70),labels = NULL, expand = c(0, 0), name = element_blank())+
+  scale_fill_continuous(name="Percentage Prehospital Intubation", 
+                        low=RColorBrewer::brewer.pal(n=5,name = "BuGn")[2],
+                        high=RColorBrewer::brewer.pal(n=5,name = "BuGn")[5])+
+  theme(legend.position = "bottom")
+ihi_plot <- ggplot() + geom_polygon(data = world, aes(long, lat, group = group, fill = ih_int*100))+theme_bw()+
+  theme(line = element_blank()) + 
+  scale_x_continuous(limits=c(-11,33),labels = NULL, name = element_blank()) + 
+  scale_y_continuous(limits=c(35,70),labels = NULL, expand = c(0, 0), name = element_blank())+
+  scale_fill_continuous(name="Percentage in-hospital Intubation", 
+                        low=RColorBrewer::brewer.pal(n=5,name = "BuGn")[2],
+                        high=RColorBrewer::brewer.pal(n=5,name = "BuGn")[5])+
+  theme(legend.position = "bottom")
+
+phi_plot
+ihi_plot
+
+pdf("Output/perc_intub.pdf", width = 10, height = 5)
+bgravesteijn::multiplot(phi_plot, ihi_plot, cols=2)
+dev.off()
+
+tiff("Output/Figure3.tiff",width=800, height=425, res = 90)
+bgravesteijn::multiplot(phi_plot, ihi_plot, cols=2)
+dev.off()
+ min(prop.table(table(df$intub, df$country),2)[2,], na.rm=TRUE)
+ max(prop.table(table(df$intub, df$country),2)[2,], na.rm=TRUE)
+ min(prop.table(table(df$intub, df$country),2)[3,], na.rm=TRUE)
+ max(prop.table(table(df$intub, df$country),2)[3,], na.rm=TRUE)
+min(prop.table(table(df$intub, df$center),2)[2,], na.rm=TRUE)
+ max(prop.table(table(df$intub, df$center),2)[2,], na.rm=TRUE)
+ min(prop.table(table(df$intub, df$center),2)[3,], na.rm=TRUE)
+ max(prop.table(table(df$intub, df$center),2)[3,], na.rm=TRUE)
+ 
+center_int <- prop.table(table(df$center,df$intub),1)
+country_int <- prop.table(table(df$country,df$intub),1)
+
+cor.test(center_int[,2], center_int[,3])
+cor.test(country_int[,2], country_int[,3])
+```
+
+```{r imputation, eval=FALSE, include=FALSE}
+dfi0t <- df[,c(1,4,8,9,10,11,12,13,14,18,21,22,24,28,29,30,31,32)]
+dfi0t$pupil_ph <- factor(as.numeric(dfi0t$pupil_ph%in%c(1,2)))
+dfi0 <- mice(dfi0t, maxit=0)
+meth <- dfi0$method
+pred <- dfi0$predictorMatrix
+
+meth["bmi"] <- "~I(weight/((height/100)^2))"
+meth[which(meth=="pmm")] <- "midastouch"
+
+
+pred[c("weight", "height"),"bmi"] <- 0
+pred[,c("gupi", "center", "country")] <- 0
+dfi <- mice(dfi0t, m=5, method=meth, predictorMatrix = pred, seed = 123)
+plot(dfi)
+densityplot(dfi)
+
+#############Add pp
+load("Data/pp data.RData")
+mergedt<-merge(dt.pp, dt.key, by.x="SiteID", by.y="ppid", all.x=TRUE)
+df<-merge(df, mergedt, by="gupi", all.x = TRUE)
+
+#####recoding
+df$SeqEROp247Room<-factor(df$SeqEROp247Room)
+df$MMTHeliSpecAnest<-factor(df$MMTHeliSpecAnest)
+df$AmbuActionIntubate<-factor(df$AmbuActionIntubate)
+df$SceneTraumaPolicy<-factor(df$SceneTraumaPolicy)
+levels(df$SceneTraumaPolicy)<-c("Scoop and run", "Scoop and run", "Stay and play", "Stay and play", NA)
+df$HeadMultiTraumaPat<-factor(df$HeadMultiTraumaPat)
+levels(df$HeadMultiTraumaPat)<-c("Anesthesiologist", "Surgeon", "Surgeon", "Surgeon", "Emergency physician", "Other")
+contrasts(df$HeadMultiTraumaPat)<-matrix(c(1,0,0,0,0,1,0,0,0,0,1,0), nrow = 4)
+df$EDTeamAnest
+df<-df[,-1*which(colnames(df)%in%c("CatchmentArea10km", "CatchmentArea5km", 
+                                   "MMTHeliSpecTraumaSurg", "TrainingAmbulance",
+                                   "country.y", "center.y", "siteno", 
+                                   "Subject.SiteCode", "SiteID", "TraumaLevel"))]
+levels(df$EDTeamAnest)<-c("NA", 0,1)
+
+##add variables to mids
+dfi <- cbind(dfi, MMTHeliSpecAnest=df$MMTHeliSpecAnest)
+dfi <- cbind(dfi, AmbuActionIntubate=df$AmbuActionIntubate)
+dfi <- cbind(dfi, SceneTraumaPolicy=df$SceneTraumaPolicy)
+
+save(dfi, file="Data/imputed.Rdata")
+
+```
+
+```{r models}
+load("Data/imputed.Rdata")
+
+set.seed(1234)
+fit.fe <- with(dfi, nnet::multinom(intub~Subject.Age+
+                                  InjuryHx.GCSScoreBaselineDerived +
+                                  InjuryHx.HeadNeckAIS+
+                                  InjuryHx.ThoraxChestAIS+
+                                  InjuryHx.FaceAIS+
+                                  InjuryHx.AbdomenPelvicContentsAIS+
+                                  pupil_ph))
+kable(round(summary(pool(fit.fe)),3))
+res_fe <- round(summary(pool(fit.fe)),3)
+res_fe$result <- paste(sprintf("%.2f", exp(res_fe$estimate)),
+                       "(",
+                       sprintf("%.2f", exp(res_fe$estimate-1.96*res_fe$std.error)),
+                       " - ",
+                       sprintf("%.2f", exp(res_fe$estimate+1.96*res_fe$std.error)),
+                       ")")
+write.csv2(res_fe, file="Output/fe_multinom.csv")
+
+
+#gcs only
+set.seed(1234)
+fit.gcs <- with(dfi, nnet::multinom(intub~InjuryHx.GCSScoreBaselineDerived, subset = center%in%centersubset))
+
+
+data.sas <- complete(dfi, action = "long", include = FALSE)
+data.sas$'_Imputation_' <- data.sas$.imp
+data.sas$face <- data.sas$InjuryHx.FaceAIS
+data.sas$abdo <- data.sas$InjuryHx.AbdomenPelvicContentsAIS
+data.sas$age <- data.sas$Subject.Age
+data.sas$headneck <- data.sas$InjuryHx.HeadNeckAIS
+data.sas$thorax <- data.sas$InjuryHx.ThoraxChestAIS
+data.sas$gcs <- data.sas$InjuryHx.GCSScoreBaselineDerived
+write.csv(data.sas, file="Data/sas.data.1.csv")
+for(i in c('face', 'abdo','age', 'headneck','thorax', 'gcs')){
+  data.sas[,i] <- (data.sas[,i]-mean(data.sas[,i]))
+}
+data.sas <- data.sas
+write.csv(data.sas, file="Data/sas.data.2.csv")
+
+
+rubin.rule <- function(est, se, m){
+  res <- mean(est)
+  se_res <- mean(se)
+  extra_var <- ((m + 1)/(m * (m - 1))) * (sum((res - est)^2))
+  se_res <- se_res+extra_var
+  result <- paste(round(exp(res), 2), "(", round(exp(res-1.96*se_res),2), "-", round(exp(res+1.96*se_res),2), ")")
+  return(result)
+}
+rubin.rule_10 <- function(est, se, m){
+  res <- mean(est)*10
+  se_res <- mean(se)*10
+  extra_var <- ((m + 1)/(m * (m - 1))) * (sum((res - est)^2))
+  se_res <- se_res+extra_var
+  result <- paste(round(exp(res), 2), "(", round(exp(res-1.96*se_res),2), "-", round(exp(res+1.96*se_res),2), ")")
+  return(result)
+}
+
+rubin.rule_re <- function(est, se, m){
+  res <- mean(est)
+  se_res <- mean(se)
+  extra_var <- ((m + 1)/(m * (m - 1))) * (sum((res - est)^2))
+  se_res <- se_res+extra_var
+  result <- c(res, (res-1.96*se_res), (res+1.96*se_res))
+  return(result)
+}
+
+##model 2###########
+fit2.fe <- data.table(read.csv(file = "Data/model2_fe_out.csv"))
+fit2.re <- data.table(read.csv(file = "Data/model2_re_out.csv"))
+
+vars <- as.character(unique(fit2.fe$Effect)[-1])
+res.fe2 <- data.frame(effect=vars, or1=NA, or2=NA)
+for(i in 1:length(vars)){
+  if(vars[i] =="age"){
+    res.fe2[res.fe2$effect==vars[i],]$or1 <- rubin.rule_10(est = fit2.fe[Effect==vars[i]&intub==1,]$Estimate, se=fit2.fe[Effect==vars[i]&intub==1,]$StdErr, m=10)
+    res.fe2[res.fe2$effect==vars[i],]$or2 <- rubin.rule_10(est = fit2.fe[Effect==vars[i]&intub==2,]$Estimate, se=fit2.fe[Effect==vars[i]&intub==2,]$StdErr, m=10)
+  }else{
+    if(vars[i]!="pupil_ph"){
+     res.fe2[res.fe2$effect==vars[i],]$or1 <- rubin.rule(est = fit2.fe[Effect==vars[i]&intub==1,]$Estimate, se=fit2.fe[Effect==vars[i]&intub==1,]$StdErr, m=10)
+     res.fe2[res.fe2$effect==vars[i],]$or2 <- rubin.rule(est = fit2.fe[Effect==vars[i]&intub==2,]$Estimate, se=fit2.fe[Effect==vars[i]&intub==2,]$StdErr, m=10) 
+    }else{
+     res.fe2[res.fe2$effect==vars[i],]$or1 <- rubin.rule(est = fit2.fe[Effect==vars[i]&intub==1&pupil_ph==1,]$Estimate, se=fit2.fe[Effect==vars[i]&intub==1&pupil_ph==1,]$StdErr, m=10)
+     res.fe2[res.fe2$effect==vars[i],]$or2 <- rubin.rule(est = fit2.fe[Effect==vars[i]&intub==2&pupil_ph==1,]$Estimate, se=fit2.fe[Effect==vars[i]&intub==2&pupil_ph==1,]$StdErr, m=10) 
+    }
+  }
+}
+
+kable(res.fe2)
+write.csv2(res.fe2, file="output/res.fe2.csv")
+
+centers <- as.character(unique(fit2.re$Subject))
+res.re2 <- data.frame(center=centers, est1=NA, lo1=NA, hi1=NA,est2=NA, lo2=NA, hi2=NA )
+for(i in 1:length(centers)){
+  res.re2[res.re2$center==centers[i],2:4] <- rubin.rule_re(est = fit2.re[Subject==centers[i]&Group=="intub 1",]$Estimate, se=fit2.re[Subject==centers[i]&Group=="intub 1",]$StdErrPred, m=10)
+  res.re2[res.re2$center==centers[i],5:7] <- rubin.rule_re(est = fit2.re[Subject==centers[i]&Group=="intub 2",]$Estimate, se=fit2.re[Subject==centers[i]&Group=="intub 2",]$StdErrPred, m=10)
+}
+res.re2$country <- substr(res.re2$center, start=21, stop=100)
+res.re2$center  <- substr(res.re2$center, start=17, stop=20)
+
+plot_re <- merge(res.re2,key.maps,by="country")
+res.re2 <- data.table(plot_re)
+plot_re <- res.re2[,.(mean(est1), mean(est2)), by=region]
+colnames(plot_re) <- c("region", "est1", "est2")
+
+world$est1  <- plot_re$est1[match(world$region, plot_re$region, nomatch=NA)] 
+world$est2  <- plot_re$est2[match(world$region, plot_re$region,nomatch=NA)]
+
+phi_plot <- ggplot() + geom_polygon(data = world, aes(long, lat, group = group, fill = plogis(est1)))+theme_bw()+
+  theme(line = element_blank()) + 
+  scale_x_continuous(limits=c(-11,33),labels = NULL, name = element_blank()) + 
+  scale_y_continuous(limits=c(35,70),labels = NULL, expand = c(0, 0), name = element_blank())+
+  scale_fill_continuous(name="Predicted probability prehospital intubation", 
+                        low=RColorBrewer::brewer.pal(n=5,name = "BuGn")[2],
+                        high=RColorBrewer::brewer.pal(n=5,name = "BuGn")[5])+
+  theme(legend.position = "bottom")
+ihi_plot <- ggplot() + geom_polygon(data = world, aes(long, lat, group = group, fill = plogis(est2)))+
+  theme_bw()+
+  theme(line = element_blank()) + 
+  scale_x_continuous(limits=c(-11,33),labels = NULL, name = element_blank()) + 
+  scale_y_continuous(limits=c(35,70),labels = NULL, expand = c(0, 0), name = element_blank())+
+  scale_fill_continuous(name="Predicted probability in-hospital intubation", 
+                        low=RColorBrewer::brewer.pal(n=5,name = "BuGn")[2],
+                        high=RColorBrewer::brewer.pal(n=5,name = "BuGn")[5])+
+  theme(legend.position = "bottom")
+phi_plot
+ihi_plot
+
+pdf("Output/figure3.pdf", width=10, height=5)
+bgravesteijn::multiplot(phi_plot,ihi_plot,cols=2)
+dev.off()
+
+tiff("Output/figure4.tiff", width=800, height=425, res = 90)
+bgravesteijn::multiplot(phi_plot,ihi_plot,cols=2)
+dev.off()
+
+
+##model 3###########
+fit3.fe <- data.table(read.csv(file = "Data/model3_fe_out.csv"))
+
+vars <- as.character(unique(fit3.fe$Effect)[-1])
+res.fe3 <- data.frame(effect=vars, or1=NA, or2=NA)
+for(i in 1:length(vars)){
+  if(vars[i] =="age"){
+    res.fe3[res.fe3$effect==vars[i],]$or1 <- rubin.rule_10(est = fit3.fe[Effect==vars[i]&intub==1,]$Estimate, se=fit3.fe[Effect==vars[i]&intub==1,]$StdErr, m=10)
+    res.fe3[res.fe3$effect==vars[i],]$or2 <- rubin.rule_10(est = fit3.fe[Effect==vars[i]&intub==2,]$Estimate, se=fit3.fe[Effect==vars[i]&intub==2,]$StdErr, m=10)
+  }else{
+      if(vars[i]=="MMTHeliSpecAnest"){
+        res.fe3[res.fe3$effect==vars[i],]$or1 <- rubin.rule(est = fit3.fe[Effect==vars[i]&intub==1&MMTHeliSpecAnest==1,]$Estimate, se=fit3.fe[Effect==vars[i]&intub==1&MMTHeliSpecAnest==1,]$StdErr, m=10)
+     res.fe3[res.fe3$effect==vars[i],]$or2 <- rubin.rule(est = fit3.fe[Effect==vars[i]&intub==2&MMTHeliSpecAnest==1,]$Estimate, se=fit3.fe[Effect==vars[i]&intub==2&MMTHeliSpecAnest==1,]$StdErr, m=10)
+      }else{
+        if(vars[i]=="AmbuActionIntubate"){
+          res.fe3[res.fe3$effect==vars[i],]$or1 <- rubin.rule(est = fit3.fe[Effect==vars[i]&intub==1&AmbuActionIntubate==1,]$Estimate, se=fit3.fe[Effect==vars[i]&intub==1&AmbuActionIntubate==1,]$StdErr, m=10)
+     res.fe3[res.fe3$effect==vars[i],]$or2 <- rubin.rule(est = fit3.fe[Effect==vars[i]&intub==2&AmbuActionIntubate==1,]$Estimate, se=fit3.fe[Effect==vars[i]&intub==2&AmbuActionIntubate==1,]$StdErr, m=10)
+        }else{
+          if(vars[i]=="SceneTraumaPolicy"){
+            res.fe3[res.fe3$effect==vars[i],]$or1 <- rubin.rule(est = fit3.fe[Effect==vars[i]&intub==1&SceneTraumaPolicy=="Scoop and run",]$Estimate, se=fit3.fe[Effect==vars[i]&intub==1&SceneTraumaPolicy=="Scoop and run",]$StdErr, m=10)
+     res.fe3[res.fe3$effect==vars[i],]$or2 <- rubin.rule(est = fit3.fe[Effect==vars[i]&intub==2&SceneTraumaPolicy=="Scoop and run",]$Estimate, se=fit3.fe[Effect==vars[i]&intub==2&SceneTraumaPolicy=="Scoop and run",]$StdErr, m=10)
+          }else{
+            if(vars[i]!="pupil_ph"){
+     res.fe3[res.fe3$effect==vars[i],]$or1 <- rubin.rule(est = fit3.fe[Effect==vars[i]&intub==1,]$Estimate, se=fit3.fe[Effect==vars[i]&intub==1,]$StdErr, m=10)
+     res.fe3[res.fe3$effect==vars[i],]$or2 <- rubin.rule(est = fit3.fe[Effect==vars[i]&intub==2,]$Estimate, se=fit3.fe[Effect==vars[i]&intub==2,]$StdErr, m=10)
+            }else{
+            res.fe3[res.fe3$effect==vars[i],]$or1 <- rubin.rule(est = fit3.fe[Effect==vars[i]&intub==1&pupil_ph==1,]$Estimate, se=fit3.fe[Effect==vars[i]&intub==1&pupil_ph==1,]$StdErr, m=10)
+     res.fe3[res.fe3$effect==vars[i],]$or2 <- rubin.rule(est = fit3.fe[Effect==vars[i]&intub==2&pupil_ph==1,]$Estimate, se=fit3.fe[Effect==vars[i]&intub==2&pupil_ph==1,]$StdErr, m=10) 
+          }
+        }
+      }
+    }
+  }
+}
+
+kable(res.fe3)
+  write.csv2(res.fe3, file="Output/res_fe3.csv")
+
+plot_df <-readxl::read_excel("Output/forfigure5.xlsx")
+plot_df$est1 <- as.numeric(plot_df$est1)
+plot_df$lo1 <- as.numeric(plot_df$lo1)
+plot_df$hi1 <- as.numeric(plot_df$hi1)
+
+plot_df$var <- factor(plot_df$var, levels = c("Age, per decade",
+                                              "Highest GCS prehospital/ED",
+                                              "Head/Neck AIS",
+                                              "Thorax/Chest AIS",
+                                              "Face AIS",
+                                              "Abdomen AIS",
+                                              "Unreactive pupil(s)*",
+                                              "Prehospital care team specialist is anaesthetist",
+                                              "Ambulance may intubate",
+                                              "Scoop-and-run vs stay-and-play policy"))
+plot_df[plot_df>4]<-4
+plot_effects <-ggplot(plot_df, aes(x=var, y=est1, ymin=lo1, ymax=hi1, col=factor(intub)))+
+  geom_point(position=position_dodge(width = 0.5), cex=3)+
+  geom_linerange(position=position_dodge(width = 0.5), cex=2)+
+  geom_hline(yintercept = 1)+
+  scale_y_continuous(limits=c(0,4))+
+  ylab("Odds ratio (95% CI)")+xlab("Predictor")+
+  theme(axis.text.x = element_text(size = 11, angle = 90),
+        axis.title.y=element_text(size=14),
+        axis.text.y = element_text(size=13))+
+  scale_color_discrete("Intubation", labels=c("Prehospital", "In-hospital"))
+plot_effects
+
+pdf("Output/plot_effects.pdf")
+plot_effects
+dev.off()
+
+tiff("Output/Figure5.tiff")
+plot_effects
+dev.off()
+
+var_loglik <- readxl::read_excel("Data/loglik_var.xlsx")
+#nagelkerke
+fit.null   <-  with(dfi, nnet::multinom(intub~1))
+loglikfit0 <- mean(sapply(fit.null$analyses, FUN = logLik))
+loglikfit1 <- mean(sapply(fit.fe$analyses, FUN = logLik))
+loglikfit2 <- mean(var_loglik$min2_loglik[var_loglik$model==2]*-0.5)
+loglikfit3 <- mean(var_loglik$min2_loglik[var_loglik$model==3]*-0.5)
+loglikfitgcs <- mean(sapply(fit.gcs$analyses, FUN = logLik))
+
+nrow.data <- nrow(complete(dfi, 1))
+CoxSnell <- 1 - exp(-(2/nrow.data) * (loglikfit1 - loglikfit0))
+CoxSnell/(1 - exp((2 * nrow.data^(-1)) * loglikfit0))
+CoxSnell <- 1 - exp(-(2/nrow.data) * (loglikfit2 - loglikfit0))
+CoxSnell/(1 - exp((2 * nrow.data^(-1)) * loglikfit0))
+CoxSnell <- 1 - exp(-(2/nrow.data) * (loglikfit3 - loglikfit0))
+CoxSnell/(1 - exp((2 * nrow.data^(-1)) * loglikfit0))
+CoxSnell <- 1 - exp(-(2/nrow.data) * (loglikfitgcs - loglikfit0))
+CoxSnell/(1 - exp((2 * nrow.data^(-1)) * loglikfit0))
+
+#MOR
+var2.1   <- var_loglik$var1[var_loglik$model==2]
+varse2.1 <- var_loglik$sevar1[var_loglik$model==2]
+var2.2   <- var_loglik$var2[var_loglik$model==2]
+varse2.2 <- var_loglik$sevar2[var_loglik$model==2]
+
+var3.1   <- var_loglik$var1[var_loglik$model==3]
+varse3.1 <- var_loglik$sevar1[var_loglik$model==3]
+var3.2   <- var_loglik$var2[var_loglik$model==3]
+varse3.2 <- var_loglik$sevar2[var_loglik$model==3]
+
+
+varci2.1 <- rubin.rule_re(est = var2.1, se = varse2.1, m = 5)
+varci2.2 <- rubin.rule_re(est = var2.2, se = varse2.2, m = 5)
+varci3.1 <- rubin.rule_re(est = var3.1, se = varse3.1, m = 5)
+varci3.2 <- rubin.rule_re(est = var3.2, se = varse3.2, m = 5)
+
+bgravesteijn::MORcalc(varci2.1)
+bgravesteijn::MORcalc(varci2.2)
+bgravesteijn::MORcalc(varci3.1)
+bgravesteijn::MORcalc(varci3.2)
+```
+
+complete case analysis
+```{r}
+set.seed(1234)
+fit.fe <- with(dfi, nnet::multinom(intub~Subject.Age+
+                                  InjuryHx.GCSScoreBaselineDerived +
+                                  InjuryHx.HeadNeckAIS+
+                                  InjuryHx.ThoraxChestAIS+
+                                  InjuryHx.FaceAIS+
+                                  InjuryHx.AbdomenPelvicContentsAIS+
+                                  pupil_ph,
+                                  subset=complete.cases(df[,c('intub',
+                                                             "Subject.Age",
+                                                             "InjuryHx.GCSScoreBaselineDerived",
+                                                             "InjuryHx.HeadNeckAIS",
+                                                             "InjuryHx.ThoraxChestAIS",
+                                                             "InjuryHx.FaceAIS",
+                                                             "InjuryHx.AbdomenPelvicContentsAIS",
+                                                             "pupil_ph")])))
+kable(round(summary(pool(fit.fe)),3))
+res_fe <- round(summary(pool(fit.fe)),3)
+res_fe$result <- paste(sprintf("%.2f", exp(res_fe$estimate)),
+                       "(",
+                       sprintf("%.2f", exp(res_fe$estimate-1.96*res_fe$std.error)),
+                       " - ",
+                       sprintf("%.2f", exp(res_fe$estimate+1.96*res_fe$std.error)),
+                       ")")
+fit_cc <- cbind(phi=res_fe$result[2:8], ihi=res_fe$result[10:16])
+rownames(fit_cc)<-rownames(summary(pool(fit.fe)))[2:8]
+
+write.csv2(fit_cc, file = "Output/cc_output.csv")
+```
+
+
+#### sensitivity analysis fiona
+
+  I think it is worth doing a sensitivity analysis – if there are sufficient numbers – excluding referring hospital intubations from the model predicting likelihood of IHI as clinically they are less relevant to these ED intubation decisions in the study hospitals. The graphs suggest PHI rates are relevant to IHI decisions and I would expect this to become more apparent from this analysis
+  
+```{r}
+subset_fiona <- !(df$intub==2&(df$InjuryHx.PresIntubation==1&!is.na(df$InjuryHx.PresIntubation)))
+set.seed(1234)
+fit_fiona <- with(dfi, nnet::multinom(intub~Subject.Age+
+                                  InjuryHx.GCSScoreBaselineDerived +
+                                  InjuryHx.HeadNeckAIS+
+                                  InjuryHx.ThoraxChestAIS+
+                                  InjuryHx.FaceAIS+
+                                  InjuryHx.AbdomenPelvicContentsAIS+
+                                  pupil_ph, subset = subset_fiona))
+kable(round(summary(pool(fit_fiona)),3))
+res_fiona <- round(summary(pool(fit_fiona)),3)
+res_fiona$result <- paste(sprintf("%.2f", exp(res_fiona$estimate)),
+                       "(",
+                       sprintf("%.2f", exp(res_fiona$estimate-1.96*res_fiona$std.error)),
+                       " - ",
+                       sprintf("%.2f", exp(res_fiona$estimate+1.96*res_fiona$std.error)),
+                       ")")
+final_fiona <- cbind(phi=res_fiona$result[2:8], ihi=res_fiona$result[10:16])
+rownames(final_fiona)<-rownames(summary(pool(fit_fiona)))[2:8]
+
+write.csv2(final_fiona, file = "Output/sens_ana_lecky.csv")
+```
+  
+  
