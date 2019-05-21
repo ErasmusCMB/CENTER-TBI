@@ -4,6 +4,7 @@ author: "Benjamin Gravesteijn"
 date: "11 februari 2019"
 output: html_document
 ---
+This is the analysis for the paper called "Intubation practice in Europe for Traumatic Brain Injury: a prospective cohort study", by Benjamin Gravesteijn. 
 
 ```{r setup, include=FALSE}
 library(data.table)
@@ -201,6 +202,7 @@ bgravesteijn::multiplot(countryplot, centerplot, cols=2)
 dev.off()
 ```
 
+To create the prisma flowchart
 ```{r, flowchart}
 grid.newpage()
 # set some parameters to use repeatedly
@@ -288,6 +290,7 @@ dev.off()
 
 ```
 
+To create the maps where the percentage of intubation per country is displayed
 ```{r}
 library(maps)
 library(maptools)
@@ -354,6 +357,7 @@ cor.test(center_int[,2], center_int[,3])
 cor.test(country_int[,2], country_int[,3])
 ```
 
+To impute the data
 ```{r imputation, eval=FALSE, include=FALSE}
 dfi0t <- df[,c(1,4,8,9,10,11,12,13,14,18,21,22,24,28,29,30,31,32)]
 dfi0t$pupil_ph <- factor(as.numeric(dfi0t$pupil_ph%in%c(1,2)))
@@ -400,7 +404,7 @@ dfi <- cbind(dfi, SceneTraumaPolicy=df$SceneTraumaPolicy)
 save(dfi, file="Data/imputed.Rdata")
 
 ```
-
+The multinomial models predicting prehospital or in-hospital intubation. Including the random effects multinomial regression (performed in SAS, so I import the data here and pool it by hand using Rubin's rules). 
 ```{r models}
 load("Data/imputed.Rdata")
 
@@ -691,7 +695,7 @@ write.csv2(fit_cc, file = "Output/cc_output.csv")
 
 #### sensitivity analysis fiona
 
-  I think it is worth doing a sensitivity analysis – if there are sufficient numbers – excluding referring hospital intubations from the model predicting likelihood of IHI as clinically they are less relevant to these ED intubation decisions in the study hospitals. The graphs suggest PHI rates are relevant to IHI decisions and I would expect this to become more apparent from this analysis
+Fiona:I think it is worth doing a sensitivity analysis – if there are sufficient numbers – excluding referring hospital intubations from the model predicting likelihood of IHI as clinically they are less relevant to these ED intubation decisions in the study hospitals. The graphs suggest PHI rates are relevant to IHI decisions and I would expect this to become more apparent from this analysis
   
 ```{r}
 subset_fiona <- !(df$intub==2&(df$InjuryHx.PresIntubation==1&!is.na(df$InjuryHx.PresIntubation)))
