@@ -213,9 +213,6 @@ bothi$sodium <- (bothi$sodium-meansodium)/sdsodium
 
 bothi$age_dec <- bothi$age/10
 
-centerscale <- preProcess(bothi, method=c("center", "scale"))
-bothi       <- predict(centerscale, bothi)
-
 source("ll.calc.R")
 fitControl<- trainControl(## 10-fold CV
   method = "repeatedcv",
@@ -226,7 +223,7 @@ fitControl<- trainControl(## 10-fold CV
   ##specify which metric to optimize
   summaryFunction = ll.calc)
 
-models <- c("LR", "svmRadial", "rf", "nnet", "gbm", "lasso","ridge")
+models <- c("LR", "svmLinear", "rf", "nnet", "gbm", "lasso","ridge")
 trials <- as.character(unique(bothi$trial))
 result.cv.perstudy <- expand.grid(study   = trials,
                                   model   = models,
