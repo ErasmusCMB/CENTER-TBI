@@ -1,9 +1,10 @@
 ---
 title: "Machine learning baseline prediction TBI"
 author: "Benjamin Gravesteijn"
-date: "20 maart 2019"
+date: "21 mei 2019"
 output: html_document
 ---
+This is the script for the paper called "Machine learning has no added value in predicting outcome in traumatic brain injury: a CENTER-TBI study". 
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -175,11 +176,11 @@ unfav.center <- paste(table(centerno$d_gos[centerno$center==1]%in%c(2,3))["TRUE"
                       sep="")
 ```
 
-The baseline characteristics differed substantially between the studies. In the IMPACT database, patients were younger (`r tbl1.p[2,1]` versus `r tbl1.p[2,2]` years), had less traumatic subarachnoid hemorrhages (`r tbl1.p[11,1]` versus `r tbl1.p[11,2]`), and presented less often with a motor GCS of one (`r tbl1.p[16,1]` versus `r tbl1.p[16,2]`). However, the patients showed similar Glasgow Outcome Scale in the two studies:  In the IMPACT database, `r tbl1.p[27,1]` died and `r unfav.impact` had an unfavourable outcome, and in the CENTER-TBI study `r tbl1.p[27,2]` died and `r unfav.center` had unfavourable outcome (table 2). For an overview of the patient characteristics per study in IMPACT and CENTER-TBI, see appendix 1. 
+
 
 
 ## Train and validate
-
+imputation:
 ```{r imputation, eval=FALSE, include=FALSE}
 ##impute
 bothi0 <- mice(both, maxit=0)
@@ -197,7 +198,7 @@ bothi <- mice(both, method = meth, predictorMatrix = pred, m=2, printFlag = FALS
 save(bothi, file="Data/bothi_imputed.RData")
 ```
 
-
+setup machine learning: 
 ```{r setup ml, echo=FALSE}
 #setup machine learning
 load("Data/bothi_imputed.RData")
@@ -241,7 +242,7 @@ source("Val.prob.ci.2/val.prob.ci.2.R")
 ```
 
 
-
+training an cross-validation (and saving): 
 ```{r train and validate, eval=FALSE}
 pdf("Output/calibration_plots.pdf")
 set.seed(12)
@@ -549,6 +550,7 @@ result.cv.perstudy$nice <- nice_res2(result.cv.perstudy$est, result.cv.perstudy$
 save(result.cv.perstudy, file="Output/results.cs.perstudy.RData")
 ```
 
+to create the forest plots
 ```{r forest plots}
 load("Output/results.cs.perstudy.RData")
 
@@ -679,6 +681,7 @@ plot_c.obs+plot_c.rct
 dev.off()
 ```
 
+to create the tables in the appendix
 ```{r}
 cstattbl<-data.table(result.cv.perstudy[result.cv.perstudy$measure=="c",])
 cstattbl1<-cstattbl[outcome=="mort",.(median(est), 
@@ -824,7 +827,7 @@ Although the difference between maximum and minimum c-statistic of the models wa
 The range of average calibration intercepts was small across the models: the range of calibration intercepts was `r min(as.numeric(substr(a_res$me_avg,start=1,stop=5))[1:7])` - `r max(as.numeric(substr(a_res$me_avg,start=1,stop=5))[1:7])` for mortality and `r min(as.numeric(substr(a_res$me_avg,start=1,stop=5))[8:14])` - `r max(as.numeric(substr(a_res$me_avg,start=1,stop=5))[8:14])` for unfavourable outcome (figure 2 and table 3, appendix 1). However, the range of calibration slopes was larger: `r min(as.numeric(substr(b_res$me_avg,start=1,stop=5))[1:7])` - `r max(as.numeric(substr(b_res$me_avg,start=1,stop=5))[1:7])` for mortality and `r min(as.numeric(substr(b_res$me_avg,start=1,stop=5))[8:14])` - `r max(as.numeric(substr(b_res$me_avg,start=1,stop=5))[8:14])` for unfavourable outcome (figure 3 and table 4, appendix 1). The random forest made too extreme predictions, with a median (95% CI) calibration slope of `r b_res[b_res$model=="rf"&b_res$outcome=="mort",3]` for mortality (the overall mean was `r sprintf("%.2f",mean(result.cv.perstudy$est[result.cv.perstudy$outcome=="mort"&result.cv.perstudy$measure=="b"]))`) and `r b_res[b_res$model=="rf"&b_res$outcome=="unfav",3]` for unfavourable outcome (the overall mean was `r sprintf("%.2f",mean(result.cv.perstudy$est[result.cv.perstudy$outcome=="unfav"&result.cv.perstudy$measure=="b"]))`). This pattern was similar when calibration was assessed in the CENTER-TBI study. On the contrary, the penalized regression methods made predictions somewhat too moderate (close to 0): lasso regression showed a calibration slope of `r as.character(b_res[b_res$model=="lasso"&b_res$outcome=="mort","me_avg"])` for mortality and `r as.character(b_res[b_res$model=="lasso"&b_res$outcome=="unfav","me_avg"])` for unfavourable outcome, and ridge regression showed a calibration slope of `r as.character(b_res[b_res$model=="ridge"&b_res$outcome=="mort","me_avg"])` for mortality and `r as.character(b_res[b_res$model=="ridge"&b_res$outcome=="unfav","me_avg"])` for unfavourable outcome. The calibration intercept for mortality was generally low in CENTER-TBI: the overall mean was `r sprintf("%.2f",mean(result.cv.perstudy$est[result.cv.perstudy$outcome=="mort"&result.cv.perstudy$measure=="a"&result.cv.perstudy$study=="center"]))`, indicating that the 6-month mortality was lower than expected in CENTER-TBI. Additionally, for unfavourable outcome, the calibration slope was `r sprintf("%.2f",mean(result.cv.perstudy$est[result.cv.perstudy$outcome=="unfav"&result.cv.perstudy$measure=="b"&result.cv.perstudy$study=="center"]))`, indicating that for unfavourable outcome the models made too extreme predictions in CENTER-TBI. The model that predicted unfavourable outcome best in CENTER-TBI was ridge regression (c-statistic: `r c_res[c_res$outcome=="unfav"&c_res$model=="ridge","nice"]`,calibration slope `r b_res[b_res$outcome=="unfav"&b_res$model=="ridge","nice"]`). 
 
 
-
+the heterogeneity
 ```{r heterogeneity}
 fit_c <- lmer(est~1+(1|model)+(1|study), result.cv.perstudy[result.cv.perstudy$measure=="c"&
                                                             result.cv.perstudy$outcome=="mort",])
@@ -887,60 +890,6 @@ write.csv2(res.htrg, file="Output/heterogeneity.csv")
 The variation in c-statistic and calibration intercept was mainly attributable to the study in which the model was validated (table 4): for mortality, the variation in c-statistic was for 89.2% attributable to the study in which the model was validated (versus 7.7% to what model was used); while the variation in calibration intercept was for 97.1% attributable to the study in which the model was validated (versus 0.4% to what model was used). For unfavourable outcome, similar results were observed. On the contrary, variation in calibration slope was more attributable to what model was used, instead of to the study in which the model was validated: for mortality, the variation in calibration slope was for 51.8% attributable to the model used, and only 39.9% attributable to the study in which the model was validated . In fact, this was mostly caused by the poor calibration of the random forest models. This algorithm displayed the worst calibration slope, as indicated in figure 3. 
 
 
-```{r sensitivity analysis mi}
-load("Output/results.cs.perstudy_sens.RData")
-
-key.impact.center <- data.frame(prev.lab=levels(bothi$trial),
-                                new.lab=c("TINT", "TIUS", "SLIN", "SAP", "PEG", 
-                                          "HITI", "UK4", "TCDB", "SKB", "EBIC", 
-                                          "HITII", "NABIS", "CSTAT", "PHAMOS", 
-                                          "APOE", "CENTER-TBI"))
-result.cv.perstudy <- merge(result.cv.perstudy,key.impact.center, by.x="study", by.y="prev.lab", all.x=TRUE)
-result.cv.perstudy$rct_obs <- ifelse(result.cv.perstudy$new.lab%in%c("CENTER-TBI", "TCDB", "EBIC", "UK4", "APOE"),
-                                     "Observational", "RCT")
-
-n.df <- data.frame(table(both$trial))
-colnames(n.df) <- c("study", "n")
-result.cv.perstudy <- merge(result.cv.perstudy, n.df, by="study")
-
-cstattbl<-data.table(result.cv.perstudy[result.cv.perstudy$measure=="c",])
-cstattbl1<-cstattbl[outcome=="mort",.(median(est), 
-                                      quantile(est,probs=0.25), 
-                                      quantile(est,probs=0.75)), by=model]
-cstattbl1$all<-nice_res2(x = cstattbl1$V1, xlo = cstattbl1$V2, xhi= cstattbl1$V3)
-cstattbl1<-cstattbl1[,c(1,5)]
-cstattbl2<-cstattbl[new.lab=="CENTER-TBI"&outcome=="mort",.(nice), by=model]
-mort_c<-merge(cstattbl1,cstattbl2, by="model")
-cstattbl1<-cstattbl[outcome=="unfav",.(median(est), 
-                                       quantile(est,probs=0.25), 
-                                       quantile(est,probs=0.75)), by=model]
-cstattbl1$all<-nice_res2(x = cstattbl1$V1, xlo = cstattbl1$V2, xhi= cstattbl1$V3)
-cstattbl1<-cstattbl1[,c(1,5)]
-cstattbl2<-cstattbl[new.lab=="CENTER-TBI"&outcome=="unfav",.(nice), by=model]
-unfav_c<-merge(cstattbl1,cstattbl2, by="model")
-c_res<-rbind(mort_c, unfav_c)
-c_res$outcome<-c(rep("mort", 0.5*nrow(c_res)), rep("unfav", 0.5*nrow(c_res)))
-
-c_res$me_avg <- 0
-
-for(i in unique(c_res$model)){
-  data_mort <- result.cv.perstudy[result.cv.perstudy$model==i&
-                      result.cv.perstudy$outcome=="mort"&
-                      result.cv.perstudy$measure=="c",]
-  data_mort$se <- (data_mort$hi-data_mort$est)/1.96
-  c_res$me_avg[c_res$model==i&
-                 c_res$outcome=="mort"] <- re_pool(se = data_mort$se, est=data_mort$est)
-  
-  data_unfav <- result.cv.perstudy[result.cv.perstudy$model==i&
-                      result.cv.perstudy$outcome=="unfav"&
-                      result.cv.perstudy$measure=="c",]
-  data_unfav$se <- (data_unfav$hi-data_unfav$est)/1.96
-  c_res$me_avg[c_res$model==i&
-                 c_res$outcome=="unfav"] <- re_pool(se = data_unfav$se, est=data_unfav$est)
-  
-}
-
-write.csv2(c_res,"Output/c_stat_sensitivity.csv")
 
 ```
 
