@@ -76,7 +76,7 @@ labs$Labs.DLHemoglobingdL <- ifelse(labs$Labs.DLHemoglobinOtherUnit=="mmol/L",
                                    labs$Labs.DLHemoglobinOther*1.61,
                                    labs$Labs.DLHemoglobingdL)
 labs <- data.table(labs)
-labs <- labs[,.(first(Labs.DLGlucosemmolL), first(Labs.DLSodiummmolL), first(Labs.DLGlucosemmolL)), by=gupi]
+labs <- labs[,.(first(Labs.DLGlucosemmolL), first(Labs.DLSodiummmolL), first(Labs.DLHemoglobingdL)), by=gupi]
 colnames(labs) <- c("gupi", "glucose", "sodium", "hb")
 
 hb_qq99<- quantile(labs$hb, probs=0.99, na.rm = TRUE)
